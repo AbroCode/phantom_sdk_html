@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phantom Solana Payment</title>
+  <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+  <script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: #eee;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+    }
+    .container {
+      max-width: 600px;
+      margin-top: 50px;
+    }
+    .card {
+      background: #0f3460;
+      border: none;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    }
+    .btn-primary {
+      background: #6c5ce7;
+      border: none;
+    }
+    .btn-primary:hover {
+      background: #5a4fcf;
+    }
+    #qrCode {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      margin: 20px auto;
+      display: inline-block;
+    }
+    .status {
+      margin-top: 15px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card p-5">
+      <h2 class="text-center mb-4">Solana Payment Portal</h2>
+      <p class="text-center mb-4">Pay with Phantom Wallet</p>
+
+      <!-- Replace with your own recipient address -->
+      <div class="mb-3">
+        <label class="form-label">Recipient Address</label>
+        <input type="text" id="recipient" class="form-control" value="8vrwajVezWhxt4M1wyyPRuFzYDV3LBkw2y2nGkiSZU71" readonly>
+      </div>
+
+      <div class="mb-3">
+        <label class="form-label">Amount (SOL)</label>
+        <input type="number" id="amount" class="form-control" value="0.1" step="0.01" min="0.000000001">
+      </div>
+
+      <div class="text-center">
+        <button id="connectBtn" class="btn btn-primary btn-lg mb-3">Connect Phantom Wallet</button>
+        <button id="payBtn" class="btn btn-primary btn-lg mb-3" disabled>Pay with Phantom</button>
+      </div>
+
+      <div id="qrContainer" class="text-center mt-4"></div>
+
+      <div id="status" class="status text-center"></div>
+      <div id="walletAddress" class="text-center mt-3"></div>
+    </div>
+  </div>
+
+  <script>
+    const recipientAddress = document.getElementById('recipient').value;
+    let provider = null;
+    let publicKey = null;
+
+    function setStatus(msg, type = 'info') {
+      const status = document.getElementById('status');
+      status.innerHTML = msg;
+      status.className = `status text-center text-${type}`;
+    }
+
+    async function connectWallet() {
+      if ('phantom' in window) {
+        provider = window.phantom?.solana;
+        if (provider?.isPhantom) {
+          try {
+            const resp = await provider.connect();
+            publicKey = resp.publicKey;
+            document.getElementById('walletAddress').innerText = `Connected: ${publicKey.toString().slice(0,8)}...`;
+            document.getElementById('connectBtn').innerText = 'Connected';
+            document.getElementById('connectBtn').disabled = true;
+            document.getElementById('payBtn').disabled = false;
+            generateQR();
+            setStatus('Wallet connected successfully!', 'success');
+          } catch (err) {
+            setStatus('Connection rejected', 'danger');
+          }
+        }
+      } else {
+        setStatus('Please install Phantom Wallet extension', 'danger');
+        window.open('https://phantom.app/', '_blank');
+      }
+    }
+
+    async function sendPayment() {
+      if (!provider || !publicKey) return setStatus('Wallet not connected', 'danger');
+
+      const amountSOL = parseFloat(document.getElementById('amount').value);
+      if (isNaN(amountSOL) || amountSOL <= 0) return setStatus('Invalid amount', 'danger');
+
+      const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'), 'confirmed');
+
+      try {
+        setStatus('Preparing transaction...');
+        const { blockhash } = await connection.getLatestBlockhash();
+
+        const transaction = new solanaWeb3.Transaction({
+          recentBlockhash: blockhash,
+          feePayer: publicKey,
+        });
+
+        const transferIx = solanaWeb3.SystemProgram.transfer({
+          fromPubkey: publicKey,
+          toPubkey: new solanaWeb3.PublicKey(recipientAddress),
+          lamports: Math.round(amountSOL * solanaWeb3.LAMPORTS_PER_SOL),
+        });
+
+        transaction.add(transferIx);
+
+        setStatus('Approve in Phantom wallet...');
+        const signed = await provider.signTransaction(transaction);
+        const signature = await connection.sendRawTransaction(signed.serialize());
+
+        setStatus('Confirming transaction...');
+        await connection.confirmTransaction(signature, 'processed');
+
+        setStatus(`Payment successful! 🎉<br><a href="https://solscan.io/tx/${signature}" target="_blank">View on Solscan</a>`, 'success');
+      } catch (err) {
+        console.error(err);
+        setStatus(`Error: ${err.message || 'Transaction failed'}`, 'danger');
+      }
+    }
+
+    function generateQR() {
+      const amount = document.getElementById('amount').value;
+      const solanaPayURL = `solana:${recipientAddress}?amount=${amount}&label=Payment&message=Thank%20you!`;
+
+      const qrContainer = document.getElementById('qrContainer');
+      qrContainer.innerHTML = '<p class="mb-2">Scan with Phantom mobile app</p><div id="qrCode"></div>';
+      QRCode.toCanvas(document.getElementById('qrCode'), solanaPayURL, { width: 250 }, (error) => {
+        if (error) console.error(error);
+      });
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', connectWallet);
+    document.getElementById('payBtn').addEventListener('click', sendPayment);
+    document.getElementById('amount').addEventListener('input', generateQR);
+
+    // Auto-generate QR on load
+    generateQR();
+  </script>
+</body>
+</html>
